@@ -11,7 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # ============================================================
 # OP.exe — HIGH-CONFIDENCE FULL REBUILD
-# Primary goal: live-data LONG / SHORT / WAIT calculated independently for each timeframe
+# Primary goal: live-data LONG / SHORT / WAIT calculated independently for each timeframe, with WAIT reserved for genuinely mixed/neutral evidence
 #
 # Included concepts:
 # - 1m / 5m / 30m / 4h / 1d / 1w
@@ -919,9 +919,9 @@ def evidence_engine(df, timeframe):
     dominance = 0.0 if total_directional <= 0 else 100.0 * abs(bull - bear) / total_directional
 
     # Strict raw gate. Final gate below is even stricter.
-    if score >= 4.0 and confluence_index >= 58 and dominance >= 25:
+    if score >= 3.0 and confluence_index >= 52 and dominance >= 18:
         raw = "LONG"
-    elif score <= -4.0 and confluence_index >= 58 and dominance >= 25:
+    elif score <= -3.0 and confluence_index >= 52 and dominance >= 18:
         raw = "SHORT"
     else:
         raw = "WAIT"
@@ -1146,16 +1146,37 @@ def qualify_signal(
     minimum_dominance,
 ):
     """
-    Final OP.exe gate:
-    LONG/SHORT survives only when BOTH market direction and trade structure are strong.
-    The confluence index is not a win probability.
+    Final OP.exe signal logic — LESS RESTRICTIVE.
+
+    LONG / SHORT is determined primarily by the directional evidence
+    on THIS timeframe alone.
+
+    Projected profit, reward:risk, and ATR target distance are still
+    calculated and displayed, but they DO NOT automatically turn a
+    directional signal into WAIT.
+
+    WAIT is reserved for:
+    - mixed / neutral directional evidence
+    - insufficient data
+    - no usable structural plan
     """
-    if raw_direction not in ("LONG", "SHORT") or not plan:
+
+    if raw_direction not in ("LONG", "SHORT"):
         return {
             "signal": "WAIT",
-            "reason": "Direction is not strong enough",
+            "reason": "Mixed or neutral directional evidence",
             "projected_profit": 0.0,
             "projected_risk": 0.0,
+            "quality_notes": [],
+        }
+
+    if not plan:
+        return {
+            "signal": "WAIT",
+            "reason": "Direction found, but no usable TP/SL structure",
+            "projected_profit": 0.0,
+            "projected_risk": 0.0,
+            "quality_notes": [],
         }
 
     profit = pnl_between(
@@ -1167,36 +1188,34 @@ def qualify_signal(
         tick_size, tick_value, contracts
     )
 
-    failures = []
+    notes = []
 
     if confluence_index < minimum_confluence_index:
-        failures.append(f"confluence < {minimum_confluence_index:.0f}/100")
+        notes.append(f"lighter confluence ({confluence_index:.0f}/100)")
 
     if dominance < minimum_dominance:
-        failures.append(f"directional dominance < {minimum_dominance:.0f}/100")
+        notes.append(f"lighter directional dominance ({dominance:.0f}/100)")
 
     if profit < minimum_profit:
-        failures.append(f"projected TP < ${minimum_profit:,.0f}")
+        notes.append(f"projected TP below ${minimum_profit:,.0f}")
 
     if plan["rr"] < minimum_rr:
-        failures.append(f"R:R < {minimum_rr:.2f}:1")
+        notes.append(f"R:R below {minimum_rr:.2f}:1")
 
     if plan["atr_multiple"] < minimum_atr_multiple:
-        failures.append(f"target < {minimum_atr_multiple:.2f} ATR")
+        notes.append(f"target below {minimum_atr_multiple:.2f} ATR")
 
-    if failures:
-        return {
-            "signal": "WAIT",
-            "reason": "; ".join(failures),
-            "projected_profit": profit,
-            "projected_risk": risk,
-        }
+    if notes:
+        reason = "Directional signal — review: " + "; ".join(notes)
+    else:
+        reason = "Directional signal with stronger supporting structure"
 
     return {
         "signal": raw_direction,
-        "reason": "STRICT CONFLUENCE PASSED",
+        "reason": reason,
         "projected_profit": profit,
         "projected_risk": risk,
+        "quality_notes": notes,
     }
 
 
@@ -1323,7 +1342,7 @@ def higher_timeframe_alignment(raw_results, tf):
 
 st.title("OP.exe")
 st.caption(
-    "PRIMARY GOAL: independent LONG / SHORT / WAIT for each timeframe using live market data • Structure • BOS • Sweeps • FVGs • ORB • TP/SL"
+    "PRIMARY GOAL: each timeframe independently outputs LONG / SHORT / WAIT from live market data • WAIT only when direction is mixed/neutral • Structure • BOS • Sweeps • FVGs • ORB • TP/SL"
 )
 
 with st.form("op_form", clear_on_submit=False):
@@ -1347,7 +1366,7 @@ with st.form("op_form", clear_on_submit=False):
 
     with c3:
         minimum_profit = st.number_input(
-            "Min projected profit",
+            "Preferred projected profit",
             min_value=0,
             max_value=100000,
             value=200,
@@ -1379,7 +1398,7 @@ with st.expander("Advanced filters", expanded=False):
 
     with a1:
         minimum_rr = st.number_input(
-            "Minimum reward:risk",
+            "Preferred reward:risk",
             min_value=0.0,
             max_value=10.0,
             value=2.0,
@@ -1388,7 +1407,7 @@ with st.expander("Advanced filters", expanded=False):
 
     with a2:
         minimum_atr_multiple = st.number_input(
-            "Minimum TP distance (ATR)",
+            "Preferred TP distance (ATR)",
             min_value=0.0,
             max_value=5.0,
             value=1.0,
@@ -1410,21 +1429,21 @@ with st.expander("Advanced filters", expanded=False):
     b1, b2 = st.columns(2)
     with b1:
         minimum_confluence_index = st.number_input(
-            "Minimum confluence index (0-100)",
+            "Preferred confluence index (0-100)",
             min_value=50.0,
             max_value=100.0,
-            value=72.0,
+            value=60.0,
             step=1.0,
-            help="This is an OP.exe evidence-agreement score for THIS timeframe only, NOT a probability of winning."
+            help="Advisory only. This is an OP.exe evidence-agreement score for THIS timeframe, not a win probability."
         )
     with b2:
         minimum_dominance = st.number_input(
-            "Minimum directional dominance (0-100)",
+            "Preferred directional dominance (0-100)",
             min_value=20.0,
             max_value=100.0,
-            value=40.0,
+            value=25.0,
             step=1.0,
-            help="How one-sided the bullish vs bearish evidence must be within THIS timeframe."
+            help="Advisory only. Shows how one-sided the evidence is within THIS timeframe."
         )
 
     prefer_topstep = st.toggle(
@@ -1458,7 +1477,7 @@ m1, m2, m3, m4 = st.columns(4)
 m1.metric("Symbol", bundle["resolved"])
 m2.metric("Price", f"{last_price:,.2f}" if np.isfinite(last_price) else "No data")
 m3.metric("Market data", "LIVE" if mode.startswith("TopstepX") else "FALLBACK")
-m4.metric(f"{int(contracts)}-contract threshold", f"${minimum_profit:,.0f}")
+m4.metric(f"{int(contracts)}-contract preferred TP", f"${minimum_profit:,.0f}")
 
 is_live_feed = mode.startswith("TopstepX")
 
@@ -1502,6 +1521,12 @@ results = {}
 # ============================================================
 
 with calculator_tab:
+
+    st.caption(
+        "Each timeframe is independent. LONG/SHORT comes from that timeframe's directional evidence. "
+        "Projected profit, R:R and ATR distance are advisory quality checks and no longer force WAIT."
+    )
+
 
     # Every timeframe is evaluated on its own.
     # A 1m signal does NOT need 5m/30m confirmation.
