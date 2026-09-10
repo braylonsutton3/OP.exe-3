@@ -11,7 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 
 # ============================================================
 # OP.exe — HIGH-CONFIDENCE FULL REBUILD
-# Primary goal: live-data LONG / SHORT / WAIT with strict confluence gating
+# Primary goal: live-data LONG / SHORT / WAIT calculated independently for each timeframe
 #
 # Included concepts:
 # - 1m / 5m / 30m / 4h / 1d / 1w
@@ -919,9 +919,9 @@ def evidence_engine(df, timeframe):
     dominance = 0.0 if total_directional <= 0 else 100.0 * abs(bull - bear) / total_directional
 
     # Strict raw gate. Final gate below is even stricter.
-    if score >= 5.0 and confluence_index >= 65 and dominance >= 35:
+    if score >= 4.0 and confluence_index >= 58 and dominance >= 25:
         raw = "LONG"
-    elif score <= -5.0 and confluence_index >= 65 and dominance >= 35:
+    elif score <= -4.0 and confluence_index >= 58 and dominance >= 25:
         raw = "SHORT"
     else:
         raw = "WAIT"
@@ -1323,7 +1323,7 @@ def higher_timeframe_alignment(raw_results, tf):
 
 st.title("OP.exe")
 st.caption(
-    "PRIMARY GOAL: live-market LONG / SHORT / WAIT with strict confluence • Structure • BOS • Sweeps • FVGs • ORB • TP/SL"
+    "PRIMARY GOAL: independent LONG / SHORT / WAIT for each timeframe using live market data • Structure • BOS • Sweeps • FVGs • ORB • TP/SL"
 )
 
 with st.form("op_form", clear_on_submit=False):
@@ -1413,18 +1413,18 @@ with st.expander("Advanced filters", expanded=False):
             "Minimum confluence index (0-100)",
             min_value=50.0,
             max_value=100.0,
-            value=82.0,
+            value=72.0,
             step=1.0,
-            help="This is an OP.exe evidence-agreement score, NOT a probability of winning."
+            help="This is an OP.exe evidence-agreement score for THIS timeframe only, NOT a probability of winning."
         )
     with b2:
         minimum_dominance = st.number_input(
             "Minimum directional dominance (0-100)",
             min_value=20.0,
             max_value=100.0,
-            value=55.0,
+            value=40.0,
             step=1.0,
-            help="How one-sided the bullish vs bearish evidence must be."
+            help="How one-sided the bullish vs bearish evidence must be within THIS timeframe."
         )
 
     prefer_topstep = st.toggle(
@@ -1503,7 +1503,9 @@ results = {}
 
 with calculator_tab:
 
-    # First pass: calculate each timeframe independently.
+    # Every timeframe is evaluated on its own.
+    # A 1m signal does NOT need 5m/30m confirmation.
+    # A 5m signal does NOT need 1m/30m confirmation, etc.
     raw_evidence = {
         tf: evidence_engine(frames.get(tf, pd.DataFrame()), tf)
         for tf in TIMEFRAMES
@@ -1512,15 +1514,7 @@ with calculator_tab:
     for tf in TIMEFRAMES:
         df = frames.get(tf, pd.DataFrame())
         evidence = dict(raw_evidence[tf])
-
-        # Higher-timeframe agreement can raise/lower the confluence score,
-        # but it can never manufacture a direction from WAIT.
-        htf_adjustment, htf_note = higher_timeframe_alignment(raw_evidence, tf)
-        evidence["confluence_index"] = max(
-            0.0,
-            min(100.0, evidence.get("confluence_index", 0.0) + htf_adjustment)
-        )
-        evidence["htf_note"] = htf_note
+        evidence["htf_note"] = "independent timeframe"
 
         plan = (
             choose_target_and_stop(
@@ -1608,27 +1602,17 @@ with calculator_tab:
               <div class="tiny" style="margin-top:5px">
                 TP basis: {tp_reason} &nbsp;•&nbsp;
                 SL basis: {sl_reason} &nbsp;•&nbsp;
-                HTF: {result.get("htf_note", "—")}
+                Mode: independent timeframe
               </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    # user's main intraday confluence rule
-    intraday = [
-        results.get(tf, {}).get("signal", "WAIT")
-        for tf in ("1m", "5m", "30m")
-    ]
-
-    if intraday == ["LONG", "LONG", "LONG"]:
-        st.success("MAIN SETUP: 1m + 5m + 30m are all qualified LONG.")
-    elif intraday == ["SHORT", "SHORT", "SHORT"]:
-        st.error("MAIN SETUP: 1m + 5m + 30m are all qualified SHORT.")
-    else:
-        st.info(
-            "MAIN SETUP: WAIT — 1m, 5m and 30m are not all qualified in the same direction."
-        )
+    st.info(
+        "INDEPENDENT TIMEFRAME MODE: each row stands alone. "
+        "1m, 5m and 30m do not have to agree for a timeframe to output LONG or SHORT."
+    )
 
 # ============================================================
 # PAGE 2 — STRUCTURE / DIAGNOSTICS
@@ -1652,7 +1636,7 @@ with diagnostics_tab:
             "Bear pts": r.get("bear"),
             "Confluence /100": round(r.get("confluence_index", 0.0), 1),
             "Dominance /100": round(r.get("dominance", 0.0), 1),
-            "HTF": r.get("htf_note"),
+            "Mode": "Independent timeframe",
             "BOS": r.get("bos"),
             "CHoCH": r.get("choch"),
             "Sweep": r.get("sweep"),
